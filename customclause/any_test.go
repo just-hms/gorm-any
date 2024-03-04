@@ -177,3 +177,91 @@ func TestPreloadWithAnyUUID(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkAny(b *testing.B) {
+	req := require.New(b)
+
+	dsn := url.URL{
+		User:     url.UserPassword("kek", "kek"),
+		Scheme:   "postgres",
+		Host:     fmt.Sprintf("%s:%s", "host", "5432"),
+		Path:     "kek",
+		RawQuery: (&url.Values{"sslmode": []string{"disable"}}).Encode(),
+	}
+
+	db, err := gorm.Open(postgres.Open(dsn.String()), &gorm.Config{
+		SkipDefaultTransaction: true,
+		Logger: logger.New(log.Default(), logger.Config{
+			IgnoreRecordNotFoundError: true,
+			LogLevel:                  logger.Error,
+		}),
+	})
+	req.NoError(err)
+
+	tx := db.Begin()
+	defer tx.Rollback()
+
+	type Dog struct {
+		ID       uuid.UUID `gorm:"primaryKey;type:uuid"`
+		PersonID uuid.UUID `gorm:"type:uuid"`
+	}
+
+	type Person struct {
+		ID   uuid.UUID `gorm:"primaryKey;type:uuid"`
+		Dogs []Dog     `gorm:"foreignKey:PersonID"`
+	}
+
+	err = tx.AutoMigrate(&Person{}, &Dog{})
+	req.NoError(err)
+
+	// Create a lot of data
+	const (
+		peopleCount        = 65_000
+		dogsPerPersonCount = 10
+	)
+
+	people := make([]Person, 0, peopleCount)
+	for range peopleCount {
+		people = append(people, Person{
+			ID: uuid.New(),
+		})
+	}
+	err = tx.CreateInBatches(&people, 10_000).Error
+	req.NoError(err)
+
+	dogs := make([]Dog, 0, dogsPerPersonCount)
+	for i := range peopleCount {
+		for range dogsPerPersonCount {
+			dogs = append(dogs, Dog{
+				ID:       uuid.New(),
+				PersonID: people[i].ID,
+			})
+		}
+	}
+	err = tx.CreateInBatches(dogs, 10_000).Error
+	req.NoError(err)
+
+	b.Run("without any", func(b *testing.B) {
+		people := make([]Person, 0)
+
+		for range b.N {
+			// Preload and retrieve data
+			err = tx.Preload("Dogs").Find(&people).Error
+			req.NoError(err)
+		}
+	})
+
+	customclause.UseAny(tx)
+
+	b.Run("with any", func(b *testing.B) {
+		people := make([]Person, 0)
+
+		for range b.N {
+			// Preload and retrieve data
+			err = tx.Preload("Dogs").Find(&people).Error
+			req.NoError(err)
+		}
+	})
+
+	tx.Rollback()
+}
