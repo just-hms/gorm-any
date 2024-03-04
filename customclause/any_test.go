@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/just-hms/gorm-any/customclause"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -13,7 +14,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func TestPreloadWithAny(t *testing.T) {
+func TestPreloadWithAnyUint(t *testing.T) {
 	req := require.New(t)
 
 	dsn := url.URL{
@@ -33,7 +34,8 @@ func TestPreloadWithAny(t *testing.T) {
 	})
 	req.NoError(err)
 
-	customclause.UseAny(db)
+	tx := db.Begin()
+	defer tx.Rollback()
 
 	type Dog struct {
 		ID       uint `gorm:"primaryKey"`
@@ -45,11 +47,8 @@ func TestPreloadWithAny(t *testing.T) {
 		Dogs []Dog `gorm:"foreignKey:PersonID"`
 	}
 
-	_ = db.Migrator().DropTable(&Person{}, &Dog{})
-	err = db.AutoMigrate(&Person{}, &Dog{})
+	err = tx.AutoMigrate(&Person{}, &Dog{})
 	req.NoError(err)
-
-	tx := db.Begin()
 
 	// Create a lot of data
 	const (
@@ -78,15 +77,103 @@ func TestPreloadWithAny(t *testing.T) {
 
 	// Preload and retrieve data
 	err = tx.Preload("Dogs").Find(&people).Error
+	req.Error(err)
 
+	customclause.UseAny(tx)
+
+	err = tx.Preload("Dogs").Find(&people).Error
 	req.NoError(err)
 	req.Equal(peopleCount, len(people))
 
-	for _, person := range people {
-		req.Equal(len(person.Dogs), dogsCount)
+	for i, person := range people {
+		if i < dogsCount {
+			req.Equal(1, len(person.Dogs))
+		} else {
+			req.Equal(0, len(person.Dogs))
+		}
 	}
+
 }
 
-func BenchmarkAny(b *testing.B) {
+func TestPreloadWithAnyUUID(t *testing.T) {
+	req := require.New(t)
 
+	dsn := url.URL{
+		User:     url.UserPassword("kek", "kek"),
+		Scheme:   "postgres",
+		Host:     fmt.Sprintf("%s:%s", "host", "5432"),
+		Path:     "kek",
+		RawQuery: (&url.Values{"sslmode": []string{"disable"}}).Encode(),
+	}
+
+	db, err := gorm.Open(postgres.Open(dsn.String()), &gorm.Config{
+		SkipDefaultTransaction: true,
+		Logger: logger.New(log.Default(), logger.Config{
+			IgnoreRecordNotFoundError: true,
+			LogLevel:                  logger.Error,
+		}),
+	})
+	req.NoError(err)
+
+	tx := db.Begin()
+	defer tx.Rollback()
+
+	type Dog struct {
+		ID       uuid.UUID `gorm:"primaryKey;type:uuid"`
+		PersonID uuid.UUID `gorm:"type:uuid"`
+	}
+
+	type Person struct {
+		ID   uuid.UUID `gorm:"primaryKey;type:uuid"`
+		Dogs []Dog     `gorm:"foreignKey:PersonID"`
+	}
+
+	err = tx.AutoMigrate(&Person{}, &Dog{})
+	req.NoError(err)
+
+	// Create a lot of data
+	const (
+		peopleCount = 70_000
+		dogsCount   = 2
+	)
+
+	people := make([]Person, 0, peopleCount)
+	for range peopleCount {
+		people = append(people, Person{
+			ID: uuid.New(),
+		})
+	}
+	err = tx.CreateInBatches(&people, 1000).Error
+	req.NoError(err)
+
+	dogs := make([]Dog, 0, dogsCount)
+	for i := range dogsCount {
+		dogs = append(dogs, Dog{
+			ID:       uuid.New(),
+			PersonID: people[i].ID,
+		})
+	}
+
+	err = tx.CreateInBatches(dogs, 1000).Error
+	req.NoError(err)
+
+	people = make([]Person, 0)
+
+	// Preload and retrieve data
+	err = tx.Preload("Dogs").Find(&people).Error
+	req.Error(err)
+
+	customclause.UseAny(tx)
+
+	err = tx.Preload("Dogs").Find(&people).Error
+	req.NoError(err)
+	req.Equal(peopleCount, len(people))
+
+	for i, person := range people {
+		if i < dogsCount {
+			req.Equal(1, len(person.Dogs))
+		} else {
+			req.Equal(0, len(person.Dogs))
+		}
+	}
 }
