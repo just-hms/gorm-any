@@ -5,11 +5,8 @@ go 1.22.0
 require (
 	github.com/stretchr/testify v1.9.0
 	gorm.io/driver/postgres v1.5.6
-	gorm.io/driver/sqlite v1.5.5
 	gorm.io/gorm v1.25.7
 )
-
-require github.com/mattn/go-sqlite3 v1.14.17 // indirect
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
