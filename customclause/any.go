@@ -45,9 +45,7 @@ func (c ANY) Build(builder clause.Builder) {
 	// Only replace clause.IN with ANY for value lists, not subqueries
 	hasNonValue := slices.ContainsFunc(c.Values, func(v any) bool {
 		switch v.(type) {
-		case sql.NamedArg, clause.Column,
-			clause.Table, clause.Interface, clause.Expression,
-			[]any, *gorm.DB:
+		case sql.NamedArg, clause.Column, clause.Table, clause.Interface, clause.Expression, []any, *gorm.DB:
 			return true
 		}
 		return false
